@@ -1,0 +1,62 @@
+name: Compila la mod
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Estrai il progetto dallo ZIP (solo se hai caricato lo ZIP invece dei file)
+        run: |
+          if [ ! -f build.gradle ] && ls ./*.zip >/dev/null 2>&1; then unzip -o -q ./*.zip; fi
+          ls
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: current
+
+      - name: Trova l'ultima versione di NeoForge per Minecraft 26.3
+        id: neo
+        run: |
+          V=$(curl -fsSL https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml | grep -o '<version>26\.3\.[^<]*' | sed 's/<version>//' | sort -V | tail -1 || true)
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "NeoForge trovato: '$V'"
+
+      - name: Compila
+        run: |
+          set -o pipefail
+          ARGS=""
+          if [ -n "${{ steps.neo.outputs.version }}" ]; then ARGS="-Pneo_version=${{ steps.neo.outputs.version }}"; fi
+          gradle build --no-daemon $ARGS 2>&1 | tee build-log.txt
+
+      # Se la compilazione fallisce: elenco degli errori in una sola schermata (scheda "Summary" dell'esecuzione)
+      - name: Riepilogo errori
+        if: failure()
+        run: |
+          {
+            echo "## Errori di compilazione"
+            echo '```'
+            grep -E "error:" build-log.txt | sed 's#/home/runner/work/[^/]*/[^/]*/src/main/java/##' | head -80
+            echo '```'
+            echo "Il log completo è negli Artifacts: log-compilazione"
+          } >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Salva il log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: log-compilazione
+          path: build-log.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: horrorverse-jar
+          path: build/libs/*.jar
